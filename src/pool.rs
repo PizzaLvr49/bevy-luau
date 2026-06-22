@@ -1,13 +1,11 @@
-use crate::query::SnapshotRow;
+use bevy::platform::collections::HashMap;
 use lasso::{Rodeo, Spur};
 use mluau::prelude::*;
-use std::collections::HashMap;
 
 #[derive(Default)]
 pub struct EngineStringPool {
     pub rodeo: Rodeo,
     pub bridge: HashMap<Spur, LuaString>,
-    pub query_scratchpad: Vec<SnapshotRow>,
 }
 
 impl EngineStringPool {

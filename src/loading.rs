@@ -2,14 +2,16 @@ use bevy::{ecs::component::ComponentId, prelude::*};
 use mluau::prelude::*;
 use smallvec::SmallVec;
 use smol_str::{SmolStr, format_smolstr};
+use std::path::Path;
 
+use crate::ScriptConfig;
 use crate::pool::EngineStringPool;
 use crate::runtime::{
     LuaObserverDescriptor, LuaParam, LuaSystemDescriptor, LuauResolver, ResolvedQuery,
     ScriptingRuntime,
 };
 use crate::schema::SchemaRegistry;
-use crate::types::{LuaSchedule, LuauFieldType};
+use crate::types::{LuaSchedule, infer_field_type};
 
 pub struct LuaComponentMarker {
     pub staging_idx: usize,
@@ -72,7 +74,7 @@ pub(crate) struct StagedObserver {
 
 pub(crate) struct ComponentBlueprint {
     pub name: SmolStr,
-    pub fields: SmallVec<[(lasso::Spur, LuauFieldType); 4]>,
+    pub fields: SmallVec<[(lasso::Spur, LuaValue); 4]>,
     pub is_resource: bool,
 }
 
@@ -218,31 +220,16 @@ fn collect_fields(
     lua: &Lua,
     pool: &mut EngineStringPool,
     table: &LuaTable,
-) -> LuaResult<SmallVec<[(lasso::Spur, LuauFieldType); 4]>> {
+) -> LuaResult<SmallVec<[(lasso::Spur, LuaValue); 4]>> {
     table
         .pairs::<LuaString, LuaValue>()
         .map(|pair| {
             let (key, value) = pair?;
-            let ft = infer_field_type(&value)?;
+            infer_field_type(&value)?;
             let spur = pool.intern(lua, key.to_str()?.as_ref());
-            Ok((spur, ft))
+            Ok((spur, value))
         })
         .collect()
-}
-
-fn infer_field_type(value: &LuaValue) -> LuaResult<LuauFieldType> {
-    match value {
-        LuaValue::Boolean(_) => Ok(LuauFieldType::Bool),
-        LuaValue::Integer(_) => Ok(LuauFieldType::Integer),
-        LuaValue::Number(_) => Ok(LuauFieldType::Number),
-        LuaValue::Vector(_) => Ok(LuauFieldType::Vector4),
-        LuaValue::String(_) => Ok(LuauFieldType::String),
-        LuaValue::Buffer(b) => Ok(LuauFieldType::Buffer(b.len())),
-        other => Err(LuaError::runtime(format!(
-            "cannot infer field type from '{}'",
-            other.type_name()
-        ))),
-    }
 }
 
 fn parse_staged_params(table: &LuaTable) -> LuaResult<SmallVec<[StagedParam; 6]>> {
@@ -279,14 +266,16 @@ fn resolve_param(param: StagedParam, real_ids: &[ComponentId]) -> LuaParam {
     }
 }
 
-fn set_globals(lua: &Lua) {
+fn set_globals(lua: &Lua, entry_point: &Path) {
     let globals = lua.globals();
 
     let require_fn = lua
-        .create_require_function(LuauResolver::default())
-        .unwrap();
+        .create_require_function(LuauResolver::new(entry_point.to_path_buf()))
+        .expect("failed to install Luau `require` resolver");
 
-    globals.set("require", require_fn).unwrap();
+    globals
+        .set("require", require_fn)
+        .expect("failed to set `require` global");
 
     globals
         .set(
@@ -300,16 +289,20 @@ fn set_globals(lua: &Lua) {
                 info!(target: "bevy_luau::script", "{log_message}");
                 Ok(())
             })
-            .unwrap(),
+            .expect("failed to create `print` function"),
         )
-        .unwrap();
+        .expect("failed to set `print` global");
 
-    let ecs = lua.create_userdata(EcsHandle).unwrap();
-    globals.set("Ecs", ecs).unwrap();
+    let ecs = lua
+        .create_userdata(EcsHandle)
+        .expect("failed to create Ecs handle");
+    globals.set("Ecs", ecs).expect("failed to set `Ecs` global");
 }
 
 /// # Panics
 pub fn load_scripts(world: &mut World) {
+    let entry_point = world.resource::<ScriptConfig>().entry_point.clone();
+
     let mut runtime = world
         .remove_non_send::<ScriptingRuntime>()
         .expect("ScriptingRuntime missing");
@@ -329,34 +322,40 @@ pub fn load_scripts(world: &mut World) {
         .lua
         .set_app_data(ScriptLoadCtx(std::ptr::addr_of_mut!(ctx)));
 
-    set_globals(&runtime.lua);
+    set_globals(&runtime.lua, &entry_point);
 
-    match std::fs::read_to_string("assets/scripts/main.luau") {
+    match std::fs::read_to_string(&entry_point) {
         Ok(source) => {
             if let Err(e) = runtime
                 .lua
                 .load(&source)
-                .set_name("assets/scripts/main.luau")
+                .set_name(entry_point.display().to_string())
                 .exec()
             {
                 error!("Script error: {e}");
             }
         }
-        Err(e) => error!("Failed to read main.luau: {e}"),
+        Err(e) => error!("Failed to read {}: {e}", entry_point.display()),
     }
 
     runtime.lua.remove_app_data::<ScriptLoadCtx>();
 
     let mut real_ids: Vec<ComponentId> = Vec::with_capacity(ctx.pending_components.len());
     for blueprint in &ctx.pending_components {
-        let (schema, descriptor) = SchemaRegistry::build(blueprint.name.clone(), &blueprint.fields);
+        let (schema, descriptor) = SchemaRegistry::build(
+            blueprint.name.clone(),
+            &blueprint.fields,
+            &mut pool,
+            &runtime.lua,
+        )
+        .unwrap_or_else(|e| panic!("invalid schema for component '{}': {e}", blueprint.name));
         let id = world.register_component_with_descriptor(descriptor);
         {
             let mut reg = world.resource_mut::<SchemaRegistry>();
             if blueprint.is_resource {
                 reg.resource_ids.insert(id);
                 reg.resource_data
-                    .insert(id, vec![0u8; schema.layout.size()]);
+                    .insert(id, schema.default_template.to_vec());
             }
             reg.insert(id, schema);
         }

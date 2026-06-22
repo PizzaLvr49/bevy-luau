@@ -3,6 +3,6 @@ use bevy::prelude::*;
 fn main() -> AppExit {
     App::new()
         .add_plugins(DefaultPlugins)
-        .add_plugins(bevy_luau::ScriptingPlugin)
+        .add_plugins(bevy_luau::ScriptingPlugin::new("assets/scripts/main.luau"))
         .run()
 }
