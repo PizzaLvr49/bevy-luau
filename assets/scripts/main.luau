@@ -57,8 +57,8 @@ function Update(Time, Commands, MoveQuery) -- values snapshotted from rust
 		pos.y += vel.y * dt
 		pos.z += vel.z * dt
 
-		Commands:Trigger(entity, OnHit, { damage = math.random(0, 100) }) -- puts in a queue and flushes when function ends
-		Commands:Trigger(entity, OnHit, { damage = math.random(0, 100) })
+		Commands:Trigger(entity, OnHit, { damage = math.random(0, 1) }) -- puts in a queue and flushes when function ends
+		Commands:Trigger(entity, OnHit, { damage = math.random(0, 1) })
 	end
 end
 
