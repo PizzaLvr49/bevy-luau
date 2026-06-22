@@ -1,8 +1,12 @@
+use std::cell::Cell;
+use std::rc::Rc;
+
 use bevy::{ecs::component::ComponentId, prelude::*};
 use mluau::prelude::*;
 use smallvec::SmallVec;
 
 use crate::loading::LuaComponentMarker;
+use crate::types::LuaEntityHandle;
 
 pub struct SpawnCmd {
     pub components: SmallVec<[(ComponentId, Option<LuaTable>); 8]>,
@@ -21,11 +25,35 @@ pub struct CommandBuffer {
     pub triggers: SmallVec<[TriggerCmd; 8]>,
 }
 
-pub struct LuaCommandsHandle(pub *mut CommandBuffer);
+pub struct LuaCommandsHandle {
+    buffer: *mut CommandBuffer,
+    scope_valid: Rc<Cell<bool>>,
+}
+
+impl LuaCommandsHandle {
+    pub const fn new(buffer: *mut CommandBuffer, scope_valid: Rc<Cell<bool>>) -> Self {
+        Self {
+            buffer,
+            scope_valid,
+        }
+    }
+
+    fn check_valid(&self) -> LuaResult<()> {
+        if self.scope_valid.get() {
+            Ok(())
+        } else {
+            Err(LuaError::runtime(
+                "Commands handle used outside its originating system/observer call",
+            ))
+        }
+    }
+}
 
 impl LuaUserData for LuaCommandsHandle {
     fn add_methods<M: LuaUserDataMethods<Self>>(methods: &mut M) {
         methods.add_method("Spawn", |_, this, components: LuaTable| {
+            this.check_valid()?;
+
             let mut spawn = SpawnCmd {
                 components: SmallVec::new(),
             };
@@ -55,26 +83,26 @@ impl LuaUserData for LuaCommandsHandle {
                 spawn.components.push((comp_id, data));
             }
 
-            unsafe { (*this.0).spawns.push(spawn) };
+            unsafe { (*this.buffer).spawns.push(spawn) };
 
             Ok(())
         });
 
-        methods.add_method("Despawn", |_, this, entity_bits: i64| {
-            let entity = Entity::from_bits(entity_bits.cast_unsigned());
-            unsafe { (*this.0).despawns.push(entity) };
+        methods.add_method("Despawn", |_, this, entity: LuaEntityHandle| {
+            this.check_valid()?;
+            unsafe { (*this.buffer).despawns.push(entity.0) };
             Ok(())
         });
 
         methods.add_method(
             "Trigger",
-            |_, this, (entity_bits, event_ud, data): (i64, LuaAnyUserData, LuaTable)| {
-                let entity = Entity::from_bits(entity_bits.cast_unsigned());
+            |_, this, (entity, event_ud, data): (LuaEntityHandle, LuaAnyUserData, LuaTable)| {
+                this.check_valid()?;
                 let event_id = event_ud.borrow::<LuaComponentMarker>()?.component_id()?;
 
                 unsafe {
-                    (*this.0).triggers.push(TriggerCmd {
-                        entity,
+                    (*this.buffer).triggers.push(TriggerCmd {
+                        entity: entity.0,
                         event_id,
                         data_table: data,
                     });

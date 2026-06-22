@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use bevy::ecs::component::ComponentId;
 use mluau::prelude::*;
@@ -50,9 +50,23 @@ impl Default for ScriptingRuntime {
     }
 }
 
-#[derive(Default)]
 pub(crate) struct LuauResolver {
     current_path: PathBuf,
+    root: PathBuf,
+    entry_point: PathBuf,
+}
+
+impl LuauResolver {
+    pub fn new(entry_point: PathBuf) -> Self {
+        let root = entry_point
+            .parent()
+            .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+        Self {
+            current_path: root.clone(),
+            root,
+            entry_point,
+        }
+    }
 }
 
 impl LuaRequire for LuauResolver {
@@ -62,11 +76,11 @@ impl LuaRequire for LuauResolver {
 
     fn reset(&mut self, chunk_name: &str) -> Result<(), LuaNavigateError> {
         let base_path = if chunk_name.is_empty() {
-            "assets/scripts/main.luau"
+            self.entry_point.clone()
         } else {
-            chunk_name
+            PathBuf::from(chunk_name)
         };
-        self.current_path = PathBuf::from(base_path);
+        self.current_path = base_path;
         Ok(())
     }
 
@@ -75,7 +89,7 @@ impl LuaRequire for LuauResolver {
     }
 
     fn to_parent(&mut self) -> Result<(), LuaNavigateError> {
-        if self.current_path.pop() && self.current_path.starts_with("assets/scripts") {
+        if self.current_path.pop() && self.current_path.starts_with(&self.root) {
             Ok(())
         } else {
             Err(LuaNavigateError::NotFound)

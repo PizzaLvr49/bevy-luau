@@ -1,23 +1,24 @@
 use bevy::{
     ecs::component::{ComponentCloneBehavior, ComponentDescriptor, ComponentId, StorageType},
+    platform::collections::{HashMap, HashSet},
     prelude::*,
 };
 use lasso::Spur;
 use mluau::prelude::*;
+use smallvec::SmallVec;
 use smol_str::SmolStr;
-use std::{
-    alloc::Layout,
-    collections::{HashMap, HashSet},
-};
+use std::alloc::Layout;
 
+use crate::fields::{read_field, write_field};
 use crate::pool::EngineStringPool;
-use crate::types::{LuauFieldType, align_up};
+use crate::types::{LuauFieldType, align_up, infer_field_type};
 
 #[derive(Debug)]
 pub struct DynamicComponentSchema {
     pub name: SmolStr,
-    pub fields: HashMap<Spur, (usize, LuauFieldType)>,
+    pub fields: SmallVec<[(Spur, usize, LuauFieldType); 8]>,
     pub layout: Layout,
+    pub default_template: Box<[u8]>,
 }
 
 #[derive(Resource, Default)]
@@ -30,33 +31,51 @@ pub struct SchemaRegistry {
 
 impl SchemaRegistry {
     /// # Panics
-    #[must_use]
+    /// # Errors
     pub fn build(
         name: SmolStr,
-        fields: &[(Spur, LuauFieldType)],
-    ) -> (DynamicComponentSchema, ComponentDescriptor) {
+        fields: &[(Spur, LuaValue)],
+        pool: &mut EngineStringPool,
+        lua: &Lua,
+    ) -> LuaResult<(DynamicComponentSchema, ComponentDescriptor)> {
         let mut offset = 0usize;
-        let mut field_offsets = HashMap::new();
+        let mut field_info = SmallVec::<[(Spur, usize, LuauFieldType); 8]>::new();
 
-        for &(spur, ft) in fields {
-            let layout = ft.layout();
-            offset = align_up(offset, layout.align());
-            field_offsets.insert(spur, (offset, ft));
-            offset += layout.size();
+        for (spur, value) in fields {
+            let ft = infer_field_type(value)?;
+            let field_layout = ft.layout();
+            offset = align_up(offset, field_layout.align());
+            field_info.push((*spur, offset, ft));
+            offset += field_layout.size();
         }
 
-        let align = fields
+        let align = field_info
             .iter()
-            .map(|(_, t)| t.layout().align())
+            .map(|&(_, _, ft)| ft.layout().align())
             .max()
             .unwrap_or(1);
         let size = align_up(offset, align).max(1);
         let layout = Layout::from_size_align(size, align).expect("invalid layout");
 
+        let mut default_template = vec![0u8; size];
+        for (i, (_, value)) in fields.iter().enumerate() {
+            let (_, field_offset, ft) = field_info[i];
+            unsafe {
+                write_field(
+                    default_template.as_mut_ptr().add(field_offset),
+                    value,
+                    ft,
+                    pool,
+                    lua,
+                )?;
+            }
+        }
+
         let schema = DynamicComponentSchema {
             name: name.clone(),
-            fields: field_offsets,
+            fields: field_info,
             layout,
+            default_template: default_template.into_boxed_slice(),
         };
 
         let descriptor = unsafe {
@@ -71,7 +90,7 @@ impl SchemaRegistry {
             )
         };
 
-        (schema, descriptor)
+        Ok((schema, descriptor))
     }
 
     pub fn insert(&mut self, id: ComponentId, schema: DynamicComponentSchema) {
@@ -95,30 +114,11 @@ pub fn extract_resource_table(
     };
 
     let table = lua.create_table()?;
-    for (&spur, &(offset, ft)) in &schema.fields {
-        let lua_str = pool.get_lua_str(spur);
+    for &(spur, offset, ft) in &schema.fields {
         let field_ptr = unsafe { data.as_ptr().add(offset) };
-        match ft {
-            LuauFieldType::Bool => table.raw_set(lua_str, unsafe { *field_ptr.cast::<bool>() })?,
-            LuauFieldType::Integer => {
-                table.raw_set(lua_str, unsafe { field_ptr.cast::<i64>().read_unaligned() })?;
-            }
-            LuauFieldType::Number => {
-                table.raw_set(lua_str, unsafe { field_ptr.cast::<f64>().read_unaligned() })?;
-            }
-            LuauFieldType::Vector4 => {
-                let v = unsafe { field_ptr.cast::<[f32; 4]>().read_unaligned() };
-                table.raw_set(lua_str, mluau::Vector::new(v[0], v[1], v[2], v[3]))?;
-            }
-            LuauFieldType::String => {
-                let sp = unsafe { field_ptr.cast::<Spur>().read_unaligned() };
-                table.raw_set(lua_str, pool.get_lua_str(sp))?;
-            }
-            LuauFieldType::Buffer(len) => {
-                let slice = unsafe { std::slice::from_raw_parts(field_ptr, len) };
-                table.raw_set(lua_str, lua.create_buffer(slice)?)?;
-            }
-        }
+        let value = unsafe { read_field(field_ptr, ft, pool, lua)? };
+        let lua_str = pool.get_lua_str(spur);
+        table.raw_set(lua_str, value)?;
     }
     Ok(Some(table))
 }
@@ -126,41 +126,28 @@ pub fn extract_resource_table(
 /// # Errors
 pub fn writeback_resource_table(
     registry: &mut SchemaRegistry,
-    pool: &EngineStringPool,
+    pool: &mut EngineStringPool,
+    lua: &Lua,
     id: ComponentId,
     table: &LuaTable,
 ) -> LuaResult<()> {
-    let fields: Vec<(Spur, usize, LuauFieldType)> = match registry.id_to_schema.get(&id) {
-        Some(s) => s
-            .fields
-            .iter()
-            .map(|(&sp, &(off, ft))| (sp, off, ft))
-            .collect(),
-        None => return Ok(()),
+    let Some(schema) = registry.id_to_schema.get(&id) else {
+        return Ok(());
     };
+    let fields = schema.fields.clone();
     let Some(data) = registry.resource_data.get_mut(&id) else {
         return Ok(());
     };
     for (spur, offset, ft) in fields {
-        let lua_str = pool.get_lua_str(spur);
-        let field_ptr = unsafe { data.as_mut_ptr().add(offset) };
-        match (table.raw_get::<LuaValue>(lua_str)?, ft) {
-            (LuaValue::Boolean(b), LuauFieldType::Bool) => unsafe {
-                std::ptr::write(field_ptr.cast::<bool>(), b);
-            },
-            (LuaValue::Integer(i), LuauFieldType::Integer) => unsafe {
-                field_ptr.cast::<i64>().write_unaligned(i);
-            },
-            (LuaValue::Number(n), LuauFieldType::Number) => unsafe {
-                field_ptr.cast::<f64>().write_unaligned(n);
-            },
-            (LuaValue::Vector(v), LuauFieldType::Vector4) => unsafe {
-                field_ptr
-                    .cast::<[f32; 4]>()
-                    .write_unaligned([v.x(), v.y(), v.z(), v.w()]);
-            },
-            _ => {}
+        let value = {
+            let lua_str = pool.get_lua_str(spur);
+            table.raw_get::<LuaValue>(lua_str)?
+        };
+        if matches!(value, LuaValue::Nil) {
+            continue;
         }
+        let field_ptr = unsafe { data.as_mut_ptr().add(offset) };
+        unsafe { write_field(field_ptr, &value, ft, pool, lua)? };
     }
     Ok(())
 }

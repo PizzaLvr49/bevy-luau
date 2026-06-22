@@ -1,15 +1,18 @@
+use std::cell::Cell;
+use std::rc::Rc;
+
 use bevy::prelude::*;
 use bumpalo::Bump;
 use mluau::prelude::*;
 use smallvec::SmallVec;
 
 use crate::bridge::DynamicComponentBridge;
-use crate::commands::{CommandBuffer, TriggerCmd};
+use crate::commands::{CommandBuffer, LuaCommandsHandle, TriggerCmd};
 use crate::pool::EngineStringPool;
-use crate::query::{LuaTime, QuerySnapshot, snapshot_query, writeback_snapshot};
+use crate::query::{LuaTime, QuerySnapshot, query_entities, writeback_snapshot};
 use crate::runtime::{LuaObserverDescriptor, LuaParam, LuaSystemDescriptor, ScriptingRuntime};
 use crate::schema::{SchemaRegistry, extract_resource_table, writeback_resource_table};
-use crate::types::LuaSchedule;
+use crate::types::{LuaEntityHandle, LuaSchedule};
 
 #[derive(Default)]
 pub struct FrameArena(pub Bump);
@@ -88,34 +91,48 @@ pub fn run_lua_system(
 
     let mut cmd_buffer = CommandBuffer::default();
     let cmd_ptr = std::ptr::addr_of_mut!(cmd_buffer);
+    let scope_valid = Rc::new(Cell::new(true));
 
     world.resource_scope(|world, mut registry: Mut<SchemaRegistry>| {
         let mut args = SmallVec::<[LuaValue; 8]>::new();
 
         for param in &system.params {
-            args.push(match param {
+            let arg: LuaResult<LuaValue> = match param {
                 LuaParam::Commands => lua
-                    .create_userdata(crate::commands::LuaCommandsHandle(cmd_ptr))
-                    .map(LuaValue::UserData)
-                    .unwrap(),
+                    .create_userdata(LuaCommandsHandle::new(cmd_ptr, scope_valid.clone()))
+                    .map(LuaValue::UserData),
                 LuaParam::Time => lua
                     .create_userdata(LuaTime {
                         delta_secs,
                         elapsed_secs,
                     })
-                    .map(LuaValue::UserData)
-                    .unwrap(),
+                    .map(LuaValue::UserData),
                 LuaParam::Query(desc) => {
-                    let snap = snapshot_query(world, pool, &registry, lua, desc, bump).unwrap();
-                    lua.create_userdata(snap).map(LuaValue::UserData).unwrap()
+                    let entities = query_entities(world, desc);
+                    let snap = QuerySnapshot::new(
+                        desc.clone(),
+                        entities,
+                        std::ptr::from_mut::<World>(world),
+                        &raw const *registry,
+                        std::ptr::from_mut::<EngineStringPool>(pool),
+                        scope_valid.clone(),
+                    );
+                    lua.create_userdata(snap).map(LuaValue::UserData)
                 }
-                LuaParam::Resource(id) => extract_resource_table(&registry, pool, lua, *id)
-                    .unwrap()
-                    .map_or_else(
-                        || LuaValue::Table(lua.create_table().unwrap()),
-                        LuaValue::Table,
-                    ),
-            });
+                LuaParam::Resource(id) => match extract_resource_table(&registry, pool, lua, *id) {
+                    Ok(Some(t)) => Ok(LuaValue::Table(t)),
+                    Ok(None) => lua.create_table().map(LuaValue::Table),
+                    Err(e) => Err(e),
+                },
+            };
+
+            match arg {
+                Ok(v) => args.push(v),
+                Err(e) => {
+                    error!("failed to prepare Lua system argument: {e}");
+                    return;
+                }
+            }
         }
 
         if let Err(e) = system
@@ -125,18 +142,21 @@ pub fn run_lua_system(
             error!("{e}");
         }
 
+        scope_valid.set(false);
+
         for (param, val) in system.params.iter().zip(args.iter()) {
             match (param, val) {
                 (LuaParam::Query(_), LuaValue::UserData(ud)) => {
-                    if let Ok(mut snap) = ud.borrow_mut::<QuerySnapshot>() {
-                        writeback_snapshot(world, pool, &registry, lua, &snap).ok();
-                        let mut rows = std::mem::take(&mut snap.rows);
-                        rows.clear();
-                        pool.query_scratchpad = rows;
+                    if let Ok(snap) = ud.borrow::<QuerySnapshot>()
+                        && let Err(e) = writeback_snapshot(world, pool, &registry, lua, bump, &snap)
+                    {
+                        error!("query writeback failed: {e}");
                     }
                 }
                 (LuaParam::Resource(id), LuaValue::Table(t)) => {
-                    writeback_resource_table(&mut registry, pool, *id, t).ok();
+                    if let Err(e) = writeback_resource_table(&mut registry, pool, lua, *id, t) {
+                        error!("resource writeback failed: {e}");
+                    }
                 }
                 _ => {}
             }
@@ -159,24 +179,47 @@ pub fn run_lua_observer(
 ) {
     let mut cmd_buffer = CommandBuffer::default();
     let cmd_ptr = std::ptr::addr_of_mut!(cmd_buffer);
+    let scope_valid = Rc::new(Cell::new(true));
 
     world.resource_scope(|world, registry: Mut<SchemaRegistry>| {
         let mut args = SmallVec::<[LuaValue; 8]>::new();
-        args.push(LuaValue::Integer(entity.to_bits().cast_signed()));
+
+        match lua.create_userdata(LuaEntityHandle(entity)) {
+            Ok(ud) => args.push(LuaValue::UserData(ud)),
+            Err(e) => {
+                error!("failed to create entity handle for observer: {e}");
+                return;
+            }
+        }
         args.push(LuaValue::Table(event_data.clone()));
 
         for param in &observer.params {
-            args.push(match param {
+            let arg: LuaResult<LuaValue> = match param {
                 LuaParam::Commands => lua
-                    .create_userdata(crate::commands::LuaCommandsHandle(cmd_ptr))
-                    .map(LuaValue::UserData)
-                    .unwrap(),
+                    .create_userdata(LuaCommandsHandle::new(cmd_ptr, scope_valid.clone()))
+                    .map(LuaValue::UserData),
                 LuaParam::Query(desc) => {
-                    let snap = snapshot_query(world, pool, &registry, lua, desc, bump).unwrap();
-                    lua.create_userdata(snap).map(LuaValue::UserData).unwrap()
+                    let entities = query_entities(world, desc);
+                    let snap = QuerySnapshot::new(
+                        desc.clone(),
+                        entities,
+                        std::ptr::from_mut::<World>(world),
+                        &raw const *registry,
+                        std::ptr::from_mut::<EngineStringPool>(pool),
+                        scope_valid.clone(),
+                    );
+                    lua.create_userdata(snap).map(LuaValue::UserData)
                 }
-                _ => LuaValue::Nil,
-            });
+                _ => Ok(LuaValue::Nil),
+            };
+
+            match arg {
+                Ok(v) => args.push(v),
+                Err(e) => {
+                    error!("failed to prepare Lua observer argument: {e}");
+                    return;
+                }
+            }
         }
 
         if let Err(e) = observer
@@ -186,14 +229,14 @@ pub fn run_lua_observer(
             error!("{e}");
         }
 
+        scope_valid.set(false);
+
         for (param, val) in observer.params.iter().zip(args[2..].iter()) {
             if let (LuaParam::Query(_), LuaValue::UserData(ud)) = (param, val)
-                && let Ok(mut snap) = ud.borrow_mut::<QuerySnapshot>()
+                && let Ok(snap) = ud.borrow::<QuerySnapshot>()
+                && let Err(e) = writeback_snapshot(world, pool, &registry, lua, bump, &snap)
             {
-                writeback_snapshot(world, pool, &registry, lua, &snap).ok();
-                let mut rows = std::mem::take(&mut snap.rows);
-                rows.clear();
-                pool.query_scratchpad = rows;
+                error!("query writeback failed: {e}");
             }
         }
     });
@@ -243,14 +286,19 @@ fn flush_commands(
             let entity = world.spawn_empty().id();
             for (comp_id, data) in spawn.components {
                 match data {
-                    Some(ref table) => unsafe {
-                        DynamicComponentBridge::insert_from_table(
-                            world, entity, comp_id, &registry, pool, table, lua,
-                        )
-                        .ok();
-                    },
+                    Some(ref table) => {
+                        if let Err(e) = unsafe {
+                            DynamicComponentBridge::insert_from_table(
+                                world, entity, comp_id, &registry, pool, table, lua, bump,
+                            )
+                        } {
+                            error!("failed to spawn component on entity {entity:?}: {e}");
+                        }
+                    }
                     None => unsafe {
-                        DynamicComponentBridge::insert_default(world, entity, comp_id, &registry);
+                        DynamicComponentBridge::insert_default(
+                            world, entity, comp_id, &registry, bump,
+                        );
                     },
                 }
             }
