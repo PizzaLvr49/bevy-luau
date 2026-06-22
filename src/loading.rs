@@ -55,7 +55,6 @@ struct StagedQuery {
 #[derive(Clone)]
 enum StagedParam {
     Commands,
-    Time,
     Query(StagedQuery),
     Resource(usize),
 }
@@ -237,7 +236,6 @@ fn parse_staged_params(table: &LuaTable) -> LuaResult<SmallVec<[StagedParam; 6]>
         .sequence_values::<LuaValue>()
         .map(|val| match val? {
             LuaValue::UserData(ud) if ud.is::<CommandsParam>() => Ok(StagedParam::Commands),
-            LuaValue::UserData(ud) if ud.is::<TimeParam>() => Ok(StagedParam::Time),
             LuaValue::UserData(ud) if ud.is::<QueryDescHandle>() => Ok(StagedParam::Query(
                 ud.borrow::<QueryDescHandle>()?.0.clone(),
             )),
@@ -255,7 +253,6 @@ fn parse_staged_params(table: &LuaTable) -> LuaResult<SmallVec<[StagedParam; 6]>
 fn resolve_param(param: StagedParam, real_ids: &[ComponentId]) -> LuaParam {
     match param {
         StagedParam::Commands => LuaParam::Commands,
-        StagedParam::Time => LuaParam::Time,
         StagedParam::Resource(idx) => LuaParam::Resource(real_ids[idx]),
         StagedParam::Query(q) => LuaParam::Query(ResolvedQuery {
             mutable: q.mutable.iter().map(|&i| real_ids[i]).collect(),

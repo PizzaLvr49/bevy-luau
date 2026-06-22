@@ -16,18 +16,6 @@ use crate::runtime::ResolvedQuery;
 use crate::schema::SchemaRegistry;
 use crate::types::LuaEntityHandle;
 
-pub struct LuaTime {
-    pub delta_secs: f64,
-    pub elapsed_secs: f64,
-}
-
-impl LuaUserData for LuaTime {
-    fn add_methods<M: LuaUserDataMethods<Self>>(methods: &mut M) {
-        methods.add_method("dt", |_, this, ()| Ok(this.delta_secs));
-        methods.add_method("elapsed", |_, this, ()| Ok(this.elapsed_secs));
-    }
-}
-
 pub(crate) struct ExtractedRow {
     pub mutable_tables: SmallVec<[LuaTable; 4]>,
     pub immutable_tables: SmallVec<[LuaTable; 4]>,
