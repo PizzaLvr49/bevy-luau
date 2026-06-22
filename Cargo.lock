@@ -1892,8 +1892,8 @@ checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 
 [[package]]
 name = "luau0-src"
-version = "0.18.2+luau715"
-source = "git+https://github.com/mluau/luau-src-rs#28f233920c88795081dd7a01770c8be98b070ccf"
+version = "0.18.3+luau725"
+source = "git+https://github.com/mluau/luau-src-rs#62371ab18e6d82b231daddfaf68f4f449c733088"
 dependencies = [
  "cc",
 ]
@@ -1916,7 +1916,7 @@ checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
 [[package]]
 name = "mlua-sys"
 version = "0.9.0"
-source = "git+https://github.com/mluau/mluau#ec9ddc0d27cd4ac3b3a5b7cb6f2da7310905ae01"
+source = "git+https://github.com/mluau/mluau#5754ee3474d957b065d02751879d76c00aa96c9b"
 dependencies = [
  "cc",
  "cfg-if",
@@ -1927,7 +1927,7 @@ dependencies = [
 [[package]]
 name = "mluau"
 version = "0.11.5"
-source = "git+https://github.com/mluau/mluau#ec9ddc0d27cd4ac3b3a5b7cb6f2da7310905ae01"
+source = "git+https://github.com/mluau/mluau#5754ee3474d957b065d02751879d76c00aa96c9b"
 dependencies = [
  "bstr",
  "either",

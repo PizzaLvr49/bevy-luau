@@ -1,16 +1,16 @@
-local Position = Ecs:RegisterComponent({ x = 0, y = 0, z = 0 })
-local Velocity = Ecs:RegisterComponent({ x = 0, y = 0, z = 0 })
-local Health = Ecs:RegisterComponent({ current = 100, max = 100 })
-local EnemyTag = Ecs:RegisterComponent({})
+local Position = Ecs:RegisterComponent { x = 0, y = 0, z = 0 }
+local Velocity = Ecs:RegisterComponent { x = 0, y = 0, z = 0 }
+local Health = Ecs:RegisterComponent { current = 100, max = 100 }
+local EnemyTag = Ecs:RegisterComponent {}
 
-local OnHit = Ecs:RegisterEvent({ damage = 0 })
-local OnDeath = Ecs:RegisterEvent({})
+local OnHit = Ecs:RegisterEvent { damage = 0 }
+local OnDeath = Ecs:RegisterEvent {}
 
-local Score = Ecs:RegisterResource({ value = 0 })
+local Score = Ecs:RegisterResource { value = 0 }
 
-local HealthQuery = Ecs:Query({
+local HealthQuery = Ecs:Query {
 	Mutable = { Health },
-})
+}
 
 function OnHitObserver(entity, hit, Commands, HealthQuery)
 	local hp = HealthQuery:get(entity)
@@ -32,22 +32,22 @@ Ecs:Observe(OnDeath, OnDeathObserver, { Ecs:Commands() })
 
 function Setup(Commands, Score)
 	for i = 1, 3000 do
-		Commands:Spawn({
+		Commands:Spawn {
 			[EnemyTag] = Ecs:Default(),
 			[Health] = Ecs:Default(),
 			[Position] = Ecs:Default(),
 			[Velocity] = { x = 10, y = 0, z = 0 },
-		})
+		}
 	end
 
 	Score.value += 3
 end
 
-local MoveQuery = Ecs:Query({
+local MoveQuery = Ecs:Query {
 	Mutable = { Position },
 	Immutable = { Velocity },
 	With = { EnemyTag },
-})
+}
 
 function Update(Time, Commands, MoveQuery) -- values snapshotted from rust
 	local dt = Time:dt()
@@ -57,8 +57,8 @@ function Update(Time, Commands, MoveQuery) -- values snapshotted from rust
 		pos.y += vel.y * dt
 		pos.z += vel.z * dt
 
-		Commands:Trigger(entity, OnHit, { damage = math.random(0, 100) }) -- puts in a queue and flushes when function ends
-		Commands:Trigger(entity, OnHit, { damage = math.random(0, 100) })
+		Commands:Trigger(entity, OnHit, { damage = math.random(0, 1) }) -- puts in a queue and flushes when function ends
+		Commands:Trigger(entity, OnHit, { damage = math.random(0, 1) })
 	end
 end
 
