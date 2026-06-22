@@ -17,8 +17,16 @@ use crate::types::{LuaEntityHandle, LuaSchedule};
 #[derive(Default)]
 pub struct FrameArena(pub Bump);
 
-pub fn reset_frame_arena(mut arena: NonSendMut<FrameArena>) {
+/// # Panics
+pub fn reset_frame_arena(
+    mut arena: NonSendMut<FrameArena>,
+    runtime: Option<NonSendMut<ScriptingRuntime>>,
+) {
     arena.0.reset();
+
+    if let Some(rt) = runtime {
+        rt.lua.gc_step().unwrap();
+    }
 }
 
 /// # Panics
