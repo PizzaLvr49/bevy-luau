@@ -1,15 +1,17 @@
 use bevy::{
     ecs::component::{ComponentCloneBehavior, ComponentDescriptor, ComponentId, StorageType},
-    platform::collections::{HashMap, HashSet},
+    platform::collections::HashMap,
     prelude::*,
 };
+use bumpalo::Bump;
 use lasso::Spur;
 use mluau::prelude::*;
 use smallvec::SmallVec;
 use smol_str::SmolStr;
 use std::alloc::Layout;
 
-use crate::fields::{read_field, write_field};
+use crate::bridge::DynamicComponentBridge;
+use crate::fields::write_field;
 use crate::pool::EngineStringPool;
 use crate::types::{LuauFieldType, align_up, infer_field_type};
 
@@ -21,12 +23,21 @@ pub struct DynamicComponentSchema {
     pub default_template: Box<[u8]>,
 }
 
-#[derive(Resource, Default)]
+#[derive(Resource)]
 pub struct SchemaRegistry {
     pub name_to_id: HashMap<SmolStr, ComponentId>,
     pub id_to_schema: HashMap<ComponentId, DynamicComponentSchema>,
-    pub resource_ids: HashSet<ComponentId>,
-    pub resource_data: HashMap<ComponentId, Vec<u8>>,
+    pub resource_entity: Entity,
+}
+
+impl FromWorld for SchemaRegistry {
+    fn from_world(world: &mut World) -> Self {
+        Self {
+            name_to_id: HashMap::default(),
+            id_to_schema: HashMap::default(),
+            resource_entity: world.spawn_empty().id(),
+        }
+    }
 }
 
 impl SchemaRegistry {
@@ -111,68 +122,23 @@ impl SchemaRegistry {
         let field_offsets = schema.fields.clone();
         let id = world.register_component_with_descriptor(descriptor);
 
-        let mut registry = world.resource_mut::<Self>();
-        if is_resource {
-            registry.resource_ids.insert(id);
-            registry
-                .resource_data
-                .insert(id, schema.default_template.to_vec());
-        }
-        registry.insert(id, schema);
+        world.resource_scope(|world, mut registry: Mut<Self>| {
+            registry.insert(id, schema);
+            if is_resource {
+                let resource_entity = registry.resource_entity;
+                let bump = Bump::new();
+                unsafe {
+                    DynamicComponentBridge::insert_default(
+                        world,
+                        resource_entity,
+                        id,
+                        &registry,
+                        &bump,
+                    );
+                }
+            }
+        });
 
         Ok((id, field_offsets))
     }
-}
-
-/// # Errors
-pub fn extract_resource_table(
-    registry: &SchemaRegistry,
-    pool: &EngineStringPool,
-    lua: &Lua,
-    id: ComponentId,
-) -> LuaResult<Option<LuaTable>> {
-    let Some(data) = registry.resource_data.get(&id) else {
-        return Ok(None);
-    };
-    let Some(schema) = registry.id_to_schema.get(&id) else {
-        return Ok(None);
-    };
-
-    let table = lua.create_table()?;
-    for &(spur, offset, ft) in &schema.fields {
-        let field_ptr = unsafe { data.as_ptr().add(offset) };
-        let value = unsafe { read_field(field_ptr, ft, pool, lua)? };
-        let lua_str = pool.get_lua_str(spur);
-        table.raw_set(lua_str, value)?;
-    }
-    Ok(Some(table))
-}
-
-/// # Errors
-pub fn writeback_resource_table(
-    registry: &mut SchemaRegistry,
-    pool: &mut EngineStringPool,
-    lua: &Lua,
-    id: ComponentId,
-    table: &LuaTable,
-) -> LuaResult<()> {
-    let Some(schema) = registry.id_to_schema.get(&id) else {
-        return Ok(());
-    };
-    let fields = schema.fields.clone();
-    let Some(data) = registry.resource_data.get_mut(&id) else {
-        return Ok(());
-    };
-    for (spur, offset, ft) in fields {
-        let value = {
-            let lua_str = pool.get_lua_str(spur);
-            table.raw_get::<LuaValue>(lua_str)?
-        };
-        if matches!(value, LuaValue::Nil) {
-            continue;
-        }
-        let field_ptr = unsafe { data.as_mut_ptr().add(offset) };
-        unsafe { write_field(field_ptr, &value, ft, pool, lua)? };
-    }
-    Ok(())
 }

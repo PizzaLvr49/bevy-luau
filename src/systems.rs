@@ -11,7 +11,7 @@ use crate::commands::{CommandBuffer, LuaCommandsHandle, TriggerCmd};
 use crate::pool::EngineStringPool;
 use crate::query::{QuerySnapshot, query_entities, writeback_snapshot};
 use crate::runtime::{LuaObserverDescriptor, LuaParam, LuaSystemDescriptor, ScriptingRuntime};
-use crate::schema::{SchemaRegistry, extract_resource_table, writeback_resource_table};
+use crate::schema::SchemaRegistry;
 use crate::types::{LuaEntityHandle, LuaSchedule};
 
 #[derive(Default)]
@@ -98,7 +98,7 @@ pub fn run_lua_system(
     let cmd_ptr = std::ptr::addr_of_mut!(cmd_buffer);
     let scope_valid = Rc::new(Cell::new(true));
 
-    world.resource_scope(|world, mut registry: Mut<SchemaRegistry>| {
+    world.resource_scope(|world, registry: Mut<SchemaRegistry>| {
         let mut args = SmallVec::<[LuaValue; 8]>::new();
 
         for param in &system.params {
@@ -118,11 +118,22 @@ pub fn run_lua_system(
                     );
                     lua.create_userdata(snap).map(LuaValue::UserData)
                 }
-                LuaParam::Resource(id) => match extract_resource_table(&registry, pool, lua, *id) {
-                    Ok(Some(t)) => Ok(LuaValue::Table(t)),
-                    Ok(None) => lua.create_table().map(LuaValue::Table),
-                    Err(e) => Err(e),
-                },
+                LuaParam::Resource(id) => {
+                    match unsafe {
+                        DynamicComponentBridge::extract_to_table(
+                            world,
+                            registry.resource_entity,
+                            *id,
+                            &registry,
+                            pool,
+                            lua,
+                        )
+                    } {
+                        Ok(Some(t)) => Ok(LuaValue::Table(t)),
+                        Ok(None) => lua.create_table().map(LuaValue::Table),
+                        Err(e) => Err(e),
+                    }
+                }
             };
 
             match arg {
@@ -153,7 +164,18 @@ pub fn run_lua_system(
                     }
                 }
                 (LuaParam::Resource(id), LuaValue::Table(t)) => {
-                    if let Err(e) = writeback_resource_table(&mut registry, pool, lua, *id, t) {
+                    if let Err(e) = unsafe {
+                        DynamicComponentBridge::insert_from_table(
+                            world,
+                            registry.resource_entity,
+                            *id,
+                            &registry,
+                            pool,
+                            t,
+                            lua,
+                            bump,
+                        )
+                    } {
                         error!("resource writeback failed: {e}");
                     }
                 }
