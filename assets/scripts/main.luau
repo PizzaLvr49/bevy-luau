@@ -50,7 +50,7 @@ local MoveQuery = Ecs:Query {
 }
 
 function Update(Time, Commands, MoveQuery) -- values snapshotted from rust
-	local dt = Time:dt()
+	local dt = Time.delta_secs
 
 	for entity, pos, vel in MoveQuery do
 		pos.x += vel.x * dt -- this is in pure luau and once the function finishes it flushes back to rust

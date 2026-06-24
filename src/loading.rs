@@ -1,4 +1,4 @@
-use bevy::{ecs::component::ComponentId, prelude::*};
+use bevy::{ecs::component::ComponentId, platform::collections::HashMap, prelude::*};
 use mluau::prelude::*;
 use smallvec::SmallVec;
 use smol_str::{SmolStr, format_smolstr};
@@ -33,14 +33,15 @@ pub struct ScheduleMarker(pub LuaSchedule);
 impl LuaUserData for ScheduleMarker {}
 
 pub struct CommandsParam;
-pub struct TimeParam;
 pub struct DefaultMarker;
 
 #[derive(Clone, Copy)]
-pub struct ResourceDesc(pub usize);
+pub enum ResourceDesc {
+    Staged(usize),
+    Resolved(ComponentId),
+}
 
 impl LuaUserData for CommandsParam {}
-impl LuaUserData for TimeParam {}
 impl LuaUserData for DefaultMarker {}
 impl LuaUserData for ResourceDesc {}
 
@@ -57,6 +58,7 @@ enum StagedParam {
     Commands,
     Query(StagedQuery),
     Resource(usize),
+    ResolvedResource(ComponentId),
 }
 
 pub(crate) struct StagedSystem {
@@ -86,6 +88,7 @@ pub(crate) struct LoadContext {
     pub pending_systems: Vec<StagedSystem>,
     pub pending_observers: Vec<StagedObserver>,
     pub component_markers: Vec<LuaAnyUserData>,
+    pub native_ids: HashMap<lasso::Spur, ComponentId>,
 }
 
 pub(crate) struct ScriptLoadCtx(pub *mut LoadContext);
@@ -116,7 +119,10 @@ impl LuaUserData for EcsHandle {
         });
 
         methods.add_method("Commands", |lua, _, ()| lua.create_userdata(CommandsParam));
-        methods.add_method("Time", |lua, _, ()| lua.create_userdata(TimeParam));
+        methods.add_method("Time", |lua, _, ()| {
+            let id = lookup_native(lua, "Time")?;
+            lua.create_userdata(ResourceDesc::Resolved(id))
+        });
         methods.add_method("Default", |lua, _, ()| lua.create_userdata(DefaultMarker));
 
         methods.add_method("RegisterComponent", |lua, _, schema_table: LuaTable| {
@@ -130,7 +136,7 @@ impl LuaUserData for EcsHandle {
         methods.add_method("RegisterResource", |lua, _, schema_table: LuaTable| {
             let marker_ud = register_schema(lua, &schema_table, true)?;
             let idx = marker_ud.borrow::<LuaComponentMarker>()?.staging_idx;
-            lua.create_userdata(ResourceDesc(idx))
+            lua.create_userdata(ResourceDesc::Staged(idx))
         });
 
         methods.add_method("Query", |lua, _, def: LuaTable| {
@@ -215,6 +221,17 @@ fn register_schema(
     })
 }
 
+fn lookup_native(lua: &Lua, name: &str) -> LuaResult<ComponentId> {
+    with_ctx(lua, |ctx| {
+        let pool = unsafe { &mut *ctx.pool };
+        let spur = pool.intern(lua, name);
+        ctx.native_ids
+            .get(&spur)
+            .copied()
+            .ok_or_else(|| LuaError::runtime(format!("no native resource registered as '{name}'")))
+    })
+}
+
 fn collect_fields(
     lua: &Lua,
     pool: &mut EngineStringPool,
@@ -240,7 +257,10 @@ fn parse_staged_params(table: &LuaTable) -> LuaResult<SmallVec<[StagedParam; 6]>
                 ud.borrow::<QueryDescHandle>()?.0.clone(),
             )),
             LuaValue::UserData(ud) if ud.is::<ResourceDesc>() => {
-                Ok(StagedParam::Resource(ud.borrow::<ResourceDesc>()?.0))
+                Ok(match *ud.borrow::<ResourceDesc>()? {
+                    ResourceDesc::Staged(idx) => StagedParam::Resource(idx),
+                    ResourceDesc::Resolved(id) => StagedParam::ResolvedResource(id),
+                })
             }
             other => Err(LuaError::runtime(format!(
                 "invalid param type '{}'",
@@ -254,6 +274,7 @@ fn resolve_param(param: StagedParam, real_ids: &[ComponentId]) -> LuaParam {
     match param {
         StagedParam::Commands => LuaParam::Commands,
         StagedParam::Resource(idx) => LuaParam::Resource(real_ids[idx]),
+        StagedParam::ResolvedResource(id) => LuaParam::Resource(id),
         StagedParam::Query(q) => LuaParam::Query(ResolvedQuery {
             mutable: q.mutable.iter().map(|&i| real_ids[i]).collect(),
             immutable: q.immutable.iter().map(|&i| real_ids[i]).collect(),
@@ -313,6 +334,10 @@ pub fn load_scripts(world: &mut World) {
         pending_systems: Vec::new(),
         pending_observers: Vec::new(),
         component_markers: Vec::new(),
+        native_ids: world
+            .resource::<crate::native::NativeRegistry>()
+            .by_name
+            .clone(),
     };
 
     runtime
@@ -339,23 +364,15 @@ pub fn load_scripts(world: &mut World) {
 
     let mut real_ids: Vec<ComponentId> = Vec::with_capacity(ctx.pending_components.len());
     for blueprint in &ctx.pending_components {
-        let (schema, descriptor) = SchemaRegistry::build(
+        let (id, _) = SchemaRegistry::register_dynamic(
+            world,
+            &runtime.lua,
+            &mut pool,
             blueprint.name.clone(),
             &blueprint.fields,
-            &mut pool,
-            &runtime.lua,
+            blueprint.is_resource,
         )
         .unwrap_or_else(|e| panic!("invalid schema for component '{}': {e}", blueprint.name));
-        let id = world.register_component_with_descriptor(descriptor);
-        {
-            let mut reg = world.resource_mut::<SchemaRegistry>();
-            if blueprint.is_resource {
-                reg.resource_ids.insert(id);
-                reg.resource_data
-                    .insert(id, schema.default_template.to_vec());
-            }
-            reg.insert(id, schema);
-        }
         real_ids.push(id);
     }
 

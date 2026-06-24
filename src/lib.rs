@@ -7,6 +7,7 @@ pub mod bridge;
 pub mod commands;
 pub mod fields;
 pub mod loading;
+pub mod native;
 pub mod pool;
 pub mod query;
 pub mod runtime;
@@ -18,6 +19,7 @@ use std::path::PathBuf;
 
 use bevy::prelude::*;
 use loading::load_scripts;
+use native::{AppNativeExt, time::TimeBuiltin};
 use pool::EngineStringPool;
 use runtime::ScriptingRuntime;
 use schema::SchemaRegistry;
@@ -64,9 +66,12 @@ impl Plugin for ScriptingPlugin {
         .init_non_send::<ScriptingRuntime>()
         .init_non_send::<EngineStringPool>()
         .init_resource::<SchemaRegistry>()
+        .init_resource::<native::NativeRegistry>()
         .init_non_send::<FrameArena>()
-        .add_systems(PreUpdate, reset_frame_arena)
-        .add_systems(Startup, (load_scripts, lua_startup_system).chain())
-        .add_systems(Update, lua_update_system);
+        .register_native::<TimeBuiltin>();
+
+        app.add_systems(PreUpdate, (reset_frame_arena, native::time::sync))
+            .add_systems(Startup, (load_scripts, lua_startup_system).chain())
+            .add_systems(Update, lua_update_system);
     }
 }

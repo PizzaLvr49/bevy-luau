@@ -97,6 +97,31 @@ impl SchemaRegistry {
         self.name_to_id.insert(schema.name.clone(), id);
         self.id_to_schema.insert(id, schema);
     }
+
+    /// # Errors
+    pub fn register_dynamic(
+        world: &mut World,
+        lua: &Lua,
+        pool: &mut EngineStringPool,
+        name: SmolStr,
+        fields: &[(Spur, LuaValue)],
+        is_resource: bool,
+    ) -> LuaResult<(ComponentId, SmallVec<[(Spur, usize, LuauFieldType); 8]>)> {
+        let (schema, descriptor) = Self::build(name, fields, pool, lua)?;
+        let field_offsets = schema.fields.clone();
+        let id = world.register_component_with_descriptor(descriptor);
+
+        let mut registry = world.resource_mut::<Self>();
+        if is_resource {
+            registry.resource_ids.insert(id);
+            registry
+                .resource_data
+                .insert(id, schema.default_template.to_vec());
+        }
+        registry.insert(id, schema);
+
+        Ok((id, field_offsets))
+    }
 }
 
 /// # Errors
