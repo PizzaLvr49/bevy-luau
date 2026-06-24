@@ -17,7 +17,6 @@ pub struct ResolvedQuery {
 #[derive(Clone)]
 pub enum LuaParam {
     Commands,
-    Time,
     Query(ResolvedQuery),
     Resource(ComponentId),
 }

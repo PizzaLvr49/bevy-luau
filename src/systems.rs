@@ -9,7 +9,7 @@ use smallvec::SmallVec;
 use crate::bridge::DynamicComponentBridge;
 use crate::commands::{CommandBuffer, LuaCommandsHandle, TriggerCmd};
 use crate::pool::EngineStringPool;
-use crate::query::{LuaTime, QuerySnapshot, query_entities, writeback_snapshot};
+use crate::query::{QuerySnapshot, query_entities, writeback_snapshot};
 use crate::runtime::{LuaObserverDescriptor, LuaParam, LuaSystemDescriptor, ScriptingRuntime};
 use crate::schema::{SchemaRegistry, extract_resource_table, writeback_resource_table};
 use crate::types::{LuaEntityHandle, LuaSchedule};
@@ -94,9 +94,6 @@ pub fn run_lua_system(
     observers: &[LuaObserverDescriptor],
     system: &LuaSystemDescriptor,
 ) {
-    let delta_secs = f64::from(world.resource::<Time>().delta_secs());
-    let elapsed_secs = world.resource::<Time>().elapsed().as_secs_f64();
-
     let mut cmd_buffer = CommandBuffer::default();
     let cmd_ptr = std::ptr::addr_of_mut!(cmd_buffer);
     let scope_valid = Rc::new(Cell::new(true));
@@ -108,12 +105,6 @@ pub fn run_lua_system(
             let arg: LuaResult<LuaValue> = match param {
                 LuaParam::Commands => lua
                     .create_userdata(LuaCommandsHandle::new(cmd_ptr, scope_valid.clone()))
-                    .map(LuaValue::UserData),
-                LuaParam::Time => lua
-                    .create_userdata(LuaTime {
-                        delta_secs,
-                        elapsed_secs,
-                    })
                     .map(LuaValue::UserData),
                 LuaParam::Query(desc) => {
                     let entities = query_entities(world, desc);
@@ -218,7 +209,7 @@ pub fn run_lua_observer(
                     );
                     lua.create_userdata(snap).map(LuaValue::UserData)
                 }
-                _ => Ok(LuaValue::Nil),
+                LuaParam::Resource(_) => Ok(LuaValue::Nil),
             };
 
             match arg {
