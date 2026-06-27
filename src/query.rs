@@ -1,5 +1,5 @@
 use bevy::{
-    ecs::{component::ComponentId, entity::EntityHashMap},
+    ecs::{entity::EntityHashMap, query::FilteredAccess},
     prelude::*,
 };
 use mluau::prelude::*;
@@ -15,17 +15,7 @@ pub struct LuaQueryCache {
 #[derive(Component)]
 pub struct LuaQueryEntry {
     /// The descriptor
-    pub descriptor: LuaQueryDescriptor,
+    pub descriptor: FilteredAccess,
     /// The cache
     pub cache: LuaQueryCache,
-}
-
-/// A descriptor describing a query defined in luau
-pub struct LuaQueryDescriptor {
-    /// The list of components to read
-    pub read: SmallVec<[ComponentId; 4]>,
-    /// The list of components to write
-    pub write: SmallVec<[ComponentId; 4]>,
-    /// The list of components the archetype should also contain
-    pub with: SmallVec<[ComponentId; 4]>,
 }
