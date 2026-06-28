@@ -1,3 +1,5 @@
+use crate::runtime::RuntimeState;
+
 use bevy::prelude::*;
 use mluau::{Compiler, prelude::*};
 use serde::{Deserialize, Serialize};
@@ -119,11 +121,13 @@ pub(crate) fn init_luau(
     mut commands: Commands,
 ) {
     let Some(script) = luau_scripts.get(&luau_entrypoint.0) else {
-        warn!("LuauEntrypointReady fired, but the asset was missing!");
+        error!("LuauEntrypointReady fired, but the asset was missing!");
         return;
     };
 
     let lua = Lua::new();
+
+    lua.set_app_data(RuntimeState { query_id: 0 });
 
     let globals = lua.globals();
 
@@ -131,11 +135,9 @@ pub(crate) fn init_luau(
 
     lua.load(&script.bytecode).exec().unwrap();
 
-    commands.spawn(LuauRuntime { lua });
-}
+    let state = lua.remove_app_data().unwrap();
 
-struct RuntimeState {
-    query_id: i32,
+    commands.spawn(LuauRuntime { lua, state });
 }
 
 struct EcsHandle;
@@ -147,9 +149,20 @@ impl LuaUserData for EcsHandle {
             Ok(())
         });
 
-        methods.add_method("Query", |lua, _, _query: LuaTable| {
+        methods.add_method("Query", |lua, _, query: LuaTable| {
             let mut runtime_state = lua.app_data_mut::<RuntimeState>().unwrap();
             runtime_state.query_id += 1;
+
+            for key in ["With", "Without", "Mutable", "Immutable"] {
+                for component_id in query
+                    .get::<LuaTable>(key)
+                    .unwrap()
+                    .sequence_values::<LuaInteger>()
+                {
+                    println!("{}", component_id.unwrap());
+                }
+            }
+
             Ok(runtime_state.query_id)
         });
     }
