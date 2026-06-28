@@ -248,8 +248,10 @@ dependencies = [
  "bumpalo",
  "lasso",
  "mluau",
+ "serde",
  "smallvec",
  "smol_str 0.3.6",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
