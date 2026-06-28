@@ -24,7 +24,8 @@ impl Plugin for BevyLuauPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(self.clone());
 
-        app.register_system(loading::watch_entrypoint_ready);
+        app.add_systems(Update, loading::watch_entrypoint_ready);
+        app.add_systems(Startup, loading::load_luau_entrypoint);
         app.add_observer(loading::init_luau);
     }
 }

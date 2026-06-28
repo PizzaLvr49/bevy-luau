@@ -75,6 +75,18 @@ impl AssetLoader for LuauScriptLoader {
     }
 }
 
+pub(crate) fn load_luau_entrypoint(
+    asset_server: Res<AssetServer>,
+    plugin: Res<crate::BevyLuauPlugin>,
+    mut commands: Commands,
+) {
+    let Some(ref file_path) = plugin.file_path else {
+        return;
+    };
+    let handle: Handle<LuauScriptAsset> = asset_server.load(file_path);
+    commands.spawn(LuauEntrypoint(handle));
+}
+
 /// Fires when the [`LuauEntrypoint`] exists and its handle is loaded.
 #[derive(Event)]
 pub struct LuauEntrypointReady;
@@ -112,7 +124,33 @@ pub(crate) fn init_luau(
     };
 
     let lua = Lua::new();
-    lua.load(&script.bytecode).exec().unwrap(); // for now just execute will setup more proper loading later
+
+    let globals = lua.globals();
+
+    globals.set("Ecs", EcsHandle).unwrap();
+
+    lua.load(&script.bytecode).exec().unwrap();
 
     commands.spawn(LuauRuntime { lua });
+}
+
+struct RuntimeState {
+    query_id: i32,
+}
+
+struct EcsHandle;
+
+impl LuaUserData for EcsHandle {
+    fn add_methods<M: LuaUserDataMethods<Self>>(methods: &mut M) {
+        methods.add_method("RegisterComponent", |lua, _, _component: LuaTable| {
+            let mut _runtime_state = lua.app_data_mut::<RuntimeState>().unwrap();
+            Ok(())
+        });
+
+        methods.add_method("Query", |lua, _, _query: LuaTable| {
+            let mut runtime_state = lua.app_data_mut::<RuntimeState>().unwrap();
+            runtime_state.query_id += 1;
+            Ok(runtime_state.query_id)
+        });
+    }
 }
