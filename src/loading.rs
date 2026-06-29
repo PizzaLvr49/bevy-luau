@@ -1,7 +1,12 @@
-use crate::runtime::{QuerySlot, RuntimeState};
+use std::alloc::Layout;
+
+use crate::runtime::{ComponentSlot, QuerySlot, RuntimeState};
 
 use bevy::{
-    ecs::{component::ComponentId, query::FilteredAccess},
+    ecs::{
+        component::{ComponentId, StorageType},
+        query::FilteredAccess,
+    },
     prelude::*,
 };
 use mluau::{Compiler, prelude::*};
@@ -133,6 +138,7 @@ pub(crate) fn init_luau(
 
     lua.set_app_data(RuntimeState {
         queries: SmallVec::new(),
+        components: SmallVec::new(),
     });
 
     let globals = lua.globals();
@@ -151,7 +157,14 @@ struct EcsHandle;
 impl LuaUserData for EcsHandle {
     fn add_methods<M: LuaUserDataMethods<Self>>(methods: &mut M) {
         methods.add_method("RegisterComponent", |lua, _, _component: LuaTable| {
-            let mut _runtime_state = lua.app_data_mut::<RuntimeState>().unwrap();
+            let mut runtime_state = lua.app_data_mut::<RuntimeState>().unwrap();
+            runtime_state.components.push(ComponentSlot::Pending {
+                layout: Layout::from_size_align(0, 0).unwrap(),
+                storage: StorageType::SparseSet,
+            }); // all placeholders until I parse the input next commit prob
+
+            drop(runtime_state);
+
             Ok(())
         });
 

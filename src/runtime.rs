@@ -1,5 +1,10 @@
+use std::alloc::Layout;
+
 use bevy::{
-    ecs::{component::ComponentId, query::FilteredAccess},
+    ecs::{
+        component::{ComponentId, StorageType},
+        query::FilteredAccess,
+    },
     prelude::*,
 };
 use mluau::prelude::*;
@@ -22,8 +27,17 @@ pub(crate) enum QuerySlot {
     Built(Entity),
 }
 
+pub(crate) enum ComponentSlot {
+    Pending {
+        layout: Layout,
+        storage: StorageType,
+    },
+    Built(ComponentId),
+}
+
 pub(crate) struct RuntimeState {
     pub(crate) queries: SmallVec<[QuerySlot; 8]>,
+    pub(crate) components: SmallVec<[ComponentSlot; 8]>,
 }
 
 pub(crate) fn flush_pending_queries(world: &mut World) {
