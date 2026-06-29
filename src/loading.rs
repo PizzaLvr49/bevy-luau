@@ -159,7 +159,7 @@ impl LuaUserData for EcsHandle {
         methods.add_method("RegisterComponent", |lua, _, _component: LuaTable| {
             let mut runtime_state = lua.app_data_mut::<RuntimeState>().unwrap();
             runtime_state.components.push(ComponentSlot::Pending {
-                layout: Layout::from_size_align(0, 0).unwrap(),
+                layout: Layout::from_size_align(0, 1).unwrap(),
                 storage: StorageType::SparseSet,
             }); // all placeholders until I parse the input next commit prob
 
