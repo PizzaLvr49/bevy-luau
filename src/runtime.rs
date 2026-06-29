@@ -29,15 +29,20 @@ pub(crate) struct RuntimeState {
 pub(crate) fn flush_pending_queries(world: &mut World) {
     world.resource_scope(|world, mut runtime: Mut<LuauRuntime>| {
         for slot in &mut runtime.state.queries {
-            if !matches!(slot, QuerySlot::Pending { .. }) {
+            let QuerySlot::Pending { access, order } = slot else {
                 continue;
-            }
-            let QuerySlot::Pending { access, order } =
-                std::mem::replace(slot, QuerySlot::Built(Entity::PLACEHOLDER))
-            else {
-                unreachable!()
             };
-            let entity = BuildLuauQuery { access, order }.apply(world).unwrap();
+
+            let taken_access = std::mem::replace(access, FilteredAccess::matches_nothing());
+            let taken_order = std::mem::take(order);
+
+            let entity = BuildLuauQuery {
+                access: taken_access,
+                order: taken_order,
+            }
+            .apply(world)
+            .unwrap();
+
             *slot = QuerySlot::Built(entity);
         }
     });
