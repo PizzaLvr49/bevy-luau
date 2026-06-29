@@ -1,6 +1,9 @@
-use crate::runtime::RuntimeState;
+use crate::runtime::{QuerySlot, RuntimeState};
 
-use bevy::prelude::*;
+use bevy::{
+    ecs::{component::ComponentId, query::FilteredAccess},
+    prelude::*,
+};
 use mluau::{Compiler, prelude::*};
 use serde::{Deserialize, Serialize};
 
@@ -15,6 +18,7 @@ pub struct LuauScriptAsset {
 pub struct LuauEntrypoint(pub Handle<LuauScriptAsset>);
 
 use bevy::asset::{AssetLoader, LoadContext, io::Reader};
+use smallvec::SmallVec;
 use thiserror::Error;
 
 use crate::runtime::LuauRuntime;
@@ -127,7 +131,9 @@ pub(crate) fn init_luau(
 
     let lua = Lua::new();
 
-    lua.set_app_data(RuntimeState { query_id: 0 });
+    lua.set_app_data(RuntimeState {
+        queries: SmallVec::new(),
+    });
 
     let globals = lua.globals();
 
@@ -151,19 +157,43 @@ impl LuaUserData for EcsHandle {
 
         methods.add_method("Query", |lua, _, query: LuaTable| {
             let mut runtime_state = lua.app_data_mut::<RuntimeState>().unwrap();
-            runtime_state.query_id += 1;
+            let query_id = runtime_state.queries.len();
 
-            for key in ["With", "Without", "Mutable", "Immutable"] {
-                for component_id in query
-                    .get::<LuaTable>(key)
-                    .unwrap()
-                    .sequence_values::<LuaInteger>()
-                {
-                    println!("{}", component_id.unwrap());
+            let mut query_access = FilteredAccess::matches_nothing();
+            let mut order = SmallVec::<[ComponentId; 8]>::new();
+
+            let access_mappings: [(_, fn(&mut FilteredAccess, ComponentId), _); _] = [
+                ("With", |qa, id| qa.and_with(id), false),
+                ("Without", |qa, id| qa.and_without(id), false),
+                ("Mutable", |qa, id| qa.add_write(id), true),
+                ("Immutable", |qa, id| qa.add_read(id), true),
+            ];
+
+            for (key, update_access, is_data) in access_mappings {
+                let table: LuaTable = query.get(key).unwrap();
+
+                for component_id in table.sequence_values::<LuaInteger>() {
+                    let component_id = component_id?;
+                    let id = ComponentId::new(
+                        usize::try_from(component_id)
+                            .map_err(|_| LuaError::runtime("component id out of range"))?,
+                    );
+                    if is_data {
+                        order.push(id);
+                    }
+
+                    update_access(&mut query_access, id);
                 }
             }
 
-            Ok(runtime_state.query_id)
+            runtime_state.queries.push(QuerySlot::Pending {
+                access: query_access,
+                order,
+            });
+
+            drop(runtime_state);
+
+            Ok(query_id)
         });
     }
 }

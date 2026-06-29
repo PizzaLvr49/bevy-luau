@@ -10,9 +10,7 @@ use smallvec::SmallVec;
 /// A cached luau query state
 #[derive(Component)]
 pub struct LuaQueryEntry {
-    /// Descriptor of the query
-    pub access: FilteredAccess,
-    /// The cached state
+    /// The cached query state
     pub state: QueryState<FilteredEntityMut<'static, 'static>>,
     /// The order of components
     pub order: SmallVec<[ComponentId; 8]>,
@@ -43,7 +41,6 @@ impl Command for BuildLuauQuery {
 
         let entity = world
             .spawn(LuaQueryEntry {
-                access: self.access,
                 state,
                 order: self.order,
             })
