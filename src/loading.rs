@@ -149,7 +149,7 @@ pub(crate) fn init_luau(
 
     let state = lua.remove_app_data().unwrap();
 
-    commands.spawn(LuauRuntime { lua, state });
+    commands.insert_resource(LuauRuntime { lua, state });
 }
 
 struct EcsHandle;
