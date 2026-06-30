@@ -11,6 +11,9 @@ pub mod loading;
 /// Resources and systems managing vm state
 pub mod runtime;
 
+/// A struct for syncing string interning between luau and rust
+pub mod pool;
+
 /// A plugin to integrate bevy and luau
 #[derive(Resource, Clone, Default)]
 pub struct BevyLuauPlugin {

@@ -1,6 +1,9 @@
 use std::alloc::Layout;
 
-use crate::runtime::{ComponentSlot, QuerySlot, RuntimeState};
+use crate::{
+    pool::EngineStringPool,
+    runtime::{self, ComponentSlot, QuerySlot, RuntimeState},
+};
 
 use bevy::{
     ecs::{
@@ -9,6 +12,7 @@ use bevy::{
     },
     prelude::*,
 };
+use lasso::Spur;
 use mluau::{Compiler, prelude::*};
 use serde::{Deserialize, Serialize};
 
@@ -136,6 +140,8 @@ pub(crate) fn init_luau(
 
     let lua = Lua::new();
 
+    lua.set_app_data(EngineStringPool::default());
+
     lua.set_app_data(RuntimeState {
         queries: SmallVec::new(),
         components: SmallVec::new(),
@@ -149,23 +155,88 @@ pub(crate) fn init_luau(
 
     let state = lua.remove_app_data().unwrap();
 
+    let string_pool: EngineStringPool = lua.remove_app_data().unwrap();
+
+    commands.insert_resource(string_pool);
+
     commands.insert_resource(LuauRuntime { lua, state });
+
+    commands.queue(runtime::flush_pending_queries);
+    commands.queue(runtime::flush_pending_components);
 }
+
+struct LuauComponentMarker(pub(crate) usize);
+
+impl LuaUserData for LuauComponentMarker {}
+
+struct LuauQueryMarker(pub(crate) usize);
+
+impl LuaUserData for LuauQueryMarker {}
 
 struct EcsHandle;
 
 impl LuaUserData for EcsHandle {
     fn add_methods<M: LuaUserDataMethods<Self>>(methods: &mut M) {
-        methods.add_method("RegisterComponent", |lua, _, _component: LuaTable| {
+        methods.add_method("RegisterComponent", |lua, _, args: LuaMultiValue| {
+            let component = args
+                .front()
+                .expect("missing component")
+                .as_table()
+                .expect("not a table");
+
             let mut runtime_state = lua.app_data_mut::<RuntimeState>().unwrap();
+            let mut string_pool = lua.app_data_mut::<EngineStringPool>().unwrap();
+
+            let mut layout = Layout::from_size_align(0, 1).unwrap();
+            let mut offsets: SmallVec<[(Spur, usize); 6]> = SmallVec::new();
+
+            for r in component.pairs() {
+                let (key, value): (_, LuaValue) = r?;
+                let spur = string_pool.intern_lua(key)?;
+
+                let field_layout = match value {
+                    LuaValue::Nil => Layout::new::<()>(),
+                    LuaValue::Boolean(_) => Layout::new::<bool>(),
+                    LuaValue::Integer(_) => Layout::new::<isize>(),
+                    LuaValue::Number(_) => Layout::new::<f64>(),
+                    LuaValue::Vector(_) => Layout::new::<[f32; 4]>(),
+                    LuaValue::String(_) => Layout::new::<Spur>(),
+                    other => {
+                        return Err(LuaError::runtime(format!(
+                            "cannot infer field type from '{}'",
+                            other.type_name()
+                        )));
+                    }
+                };
+
+                let (new_layout, offset) = layout.extend(field_layout).unwrap();
+                layout = new_layout;
+                offsets.push((spur, offset));
+            }
+
+            layout = layout.pad_to_align();
+
+            let config = args.get(1);
+            let storage = config
+                .and_then(|v| v.as_table())
+                .and_then(|t| t.get::<LuaString>("StorageType").ok())
+                .map_or(StorageType::SparseSet, |v| match v.to_str().as_deref() {
+                    Ok("Table") => StorageType::Table,
+                    _ => StorageType::SparseSet,
+                });
+
+            let component_id = runtime_state.components.len();
+
             runtime_state.components.push(ComponentSlot::Pending {
-                layout: Layout::from_size_align(0, 1).unwrap(),
-                storage: StorageType::SparseSet,
-            }); // all placeholders until I parse the input next commit prob
+                layout,
+                storage,
+                offsets,
+            });
 
             drop(runtime_state);
+            drop(string_pool);
 
-            Ok(())
+            Ok(LuauComponentMarker(component_id))
         });
 
         methods.add_method("Query", |lua, _, query: LuaTable| {
@@ -185,12 +256,16 @@ impl LuaUserData for EcsHandle {
             for (key, update_access, is_data) in access_mappings {
                 let table: LuaTable = query.get(key).unwrap();
 
-                for component_id in table.sequence_values::<LuaInteger>() {
-                    let component_id = component_id?;
-                    let id = ComponentId::new(
-                        usize::try_from(component_id)
-                            .map_err(|_| LuaError::runtime("component id out of range"))?,
-                    );
+                for value in table.sequence_values::<LuaValue>() {
+                    let value = value?;
+
+                    let marker = match value {
+                        LuaValue::UserData(ud) => ud.borrow::<LuauComponentMarker>()?,
+                        _ => return Err(LuaError::runtime("expected userdata")),
+                    };
+
+                    let component_id = marker.0;
+                    let id = ComponentId::new(component_id);
                     if is_data {
                         order.push(id);
                     }
@@ -206,7 +281,7 @@ impl LuaUserData for EcsHandle {
 
             drop(runtime_state);
 
-            Ok(query_id)
+            Ok(LuauQueryMarker(query_id))
         });
     }
 }

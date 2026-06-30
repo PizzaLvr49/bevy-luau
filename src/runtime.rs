@@ -7,6 +7,7 @@ use bevy::{
     },
     prelude::*,
 };
+use lasso::Spur;
 use mluau::prelude::*;
 use smallvec::SmallVec;
 
@@ -31,6 +32,7 @@ pub(crate) enum ComponentSlot {
     Pending {
         layout: Layout,
         storage: StorageType,
+        offsets: SmallVec<[(Spur, usize); 6]>,
     },
     Built(ComponentId),
 }
@@ -61,3 +63,5 @@ pub(crate) fn flush_pending_queries(world: &mut World) {
         }
     });
 }
+
+pub(crate) fn flush_pending_components(world: &mut World) {}
