@@ -220,10 +220,10 @@ impl LuaUserData for EcsHandle {
             let storage = config
                 .and_then(|v| v.as_table())
                 .and_then(|t| t.get::<LuaString>("StorageType").ok())
-                .map_or(StorageType::SparseSet, |v| match v.to_str().as_deref() {
-                    Ok("Table") => StorageType::Table,
-                    _ => StorageType::SparseSet,
-                });
+                .and_then(|v| {
+                    matches!(v.to_str().as_deref(), Ok("Table")).then_some(StorageType::Table)
+                })
+                .unwrap_or(StorageType::SparseSet);
 
             let component_id = runtime_state.components.len();
 
