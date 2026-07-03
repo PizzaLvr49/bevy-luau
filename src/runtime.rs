@@ -55,7 +55,7 @@ pub(crate) fn flush_pending_queries(world: &mut World) {
 
             let mut builder = QueryBuilder::<FilteredEntityMut>::new(world);
             builder.extend_access(taken_access.clone());
-            let state: QueryState<FilteredEntityMut<'static, 'static>> = builder.build();
+            let state = builder.build();
             let entity = world
                 .spawn(LuaQueryEntry {
                     state,
