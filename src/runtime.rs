@@ -50,7 +50,7 @@ pub(crate) fn flush_pending_queries(world: &mut World) {
                 continue;
             };
 
-            let taken_access = std::mem::replace(access, FilteredAccess::matches_nothing());
+            let taken_access = std::mem::take(access);
             let taken_order = std::mem::take(order);
 
             let mut builder = QueryBuilder::<FilteredEntityMut>::new(world);
