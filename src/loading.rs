@@ -1,6 +1,7 @@
 use std::alloc::Layout;
 
 use crate::{
+    fields::infer_field_type,
     pool::EngineStringPool,
     runtime::{self, ComponentSlot, QuerySlot, RuntimeState},
 };
@@ -12,7 +13,6 @@ use bevy::{
     },
     prelude::*,
 };
-use lasso::Spur;
 use mluau::{Compiler, prelude::*};
 use serde::{Deserialize, Serialize};
 
@@ -153,6 +153,8 @@ pub(crate) fn init_luau(
 
     lua.load(&script.bytecode).exec().unwrap();
 
+    globals.set("Ecs", LuaNil).unwrap();
+
     let state = lua.remove_app_data().unwrap();
 
     let string_pool: EngineStringPool = lua.remove_app_data().unwrap();
@@ -188,30 +190,19 @@ impl LuaUserData for EcsHandle {
             let mut string_pool = lua.app_data_mut::<EngineStringPool>().unwrap();
 
             let mut layout = Layout::from_size_align(0, 1).unwrap();
-            let mut offsets: SmallVec<[(Spur, usize); 6]> = SmallVec::new();
+            let mut offsets = SmallVec::new();
 
             for r in component.pairs() {
                 let (key, value): (_, LuaValue) = r?;
                 let spur = string_pool.intern_lua(key)?;
 
-                let field_layout = match value {
-                    LuaValue::Nil => Layout::new::<()>(),
-                    LuaValue::Boolean(_) => Layout::new::<bool>(),
-                    LuaValue::Integer(_) => Layout::new::<isize>(),
-                    LuaValue::Number(_) => Layout::new::<f64>(),
-                    LuaValue::Vector(_) => Layout::new::<[f32; 4]>(),
-                    LuaValue::String(_) => Layout::new::<Spur>(),
-                    other => {
-                        return Err(LuaError::runtime(format!(
-                            "cannot infer field type from '{}'",
-                            other.type_name()
-                        )));
-                    }
-                };
+                let ft = infer_field_type(&value)?;
+
+                let field_layout = ft.layout();
 
                 let (new_layout, offset) = layout.extend(field_layout).unwrap();
                 layout = new_layout;
-                offsets.push((spur, offset));
+                offsets.push((spur, offset, ft));
             }
 
             layout = layout.pad_to_align();

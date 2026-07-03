@@ -14,6 +14,9 @@ pub mod runtime;
 /// A struct for syncing string interning between luau and rust
 pub mod pool;
 
+/// A module for luau record and rust struct ffi
+pub mod fields;
+
 /// A plugin to integrate bevy and luau
 #[derive(Resource, Clone, Default)]
 pub struct BevyLuauPlugin {

@@ -11,7 +11,7 @@ use lasso::Spur;
 use mluau::prelude::*;
 use smallvec::SmallVec;
 
-use crate::query::BuildLuauQuery;
+use crate::{fields::LuauFieldType, query::BuildLuauQuery};
 
 /// Holds a [`Lua`] and other relevant state
 #[derive(Resource)]
@@ -32,7 +32,7 @@ pub(crate) enum ComponentSlot {
     Pending {
         layout: Layout,
         storage: StorageType,
-        offsets: SmallVec<[(Spur, usize); 6]>,
+        offsets: SmallVec<[(Spur, usize, LuauFieldType); 6]>,
     },
     Built(ComponentId),
 }
@@ -64,4 +64,4 @@ pub(crate) fn flush_pending_queries(world: &mut World) {
     });
 }
 
-pub(crate) fn flush_pending_components(world: &mut World) {}
+pub(crate) const fn flush_pending_components(_world: &mut World) {}
