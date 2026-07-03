@@ -16,7 +16,7 @@ impl LuauFieldType {
     pub(crate) const fn layout(self) -> Layout {
         match self {
             Self::Bool => Layout::new::<bool>(),
-            Self::Integer => Layout::new::<i64>(),
+            Self::Integer => Layout::new::<mluau::Integer>(),
             Self::Number => Layout::new::<f64>(),
             Self::Vector4 => Layout::new::<[f32; 4]>(),
             Self::String => Layout::new::<Spur>(),

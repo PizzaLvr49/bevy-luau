@@ -4,6 +4,7 @@ use bevy::{
     ecs::{
         component::{ComponentId, StorageType},
         query::FilteredAccess,
+        world::FilteredEntityMut,
     },
     prelude::*,
 };
@@ -11,7 +12,7 @@ use lasso::Spur;
 use mluau::prelude::*;
 use smallvec::SmallVec;
 
-use crate::{fields::LuauFieldType, query::BuildLuauQuery};
+use crate::{fields::LuauFieldType, query::LuaQueryEntry};
 
 /// Holds a [`Lua`] and other relevant state
 #[derive(Resource)]
@@ -52,12 +53,15 @@ pub(crate) fn flush_pending_queries(world: &mut World) {
             let taken_access = std::mem::replace(access, FilteredAccess::matches_nothing());
             let taken_order = std::mem::take(order);
 
-            let entity = BuildLuauQuery {
-                access: taken_access,
-                order: taken_order,
-            }
-            .apply(world)
-            .unwrap();
+            let mut builder = QueryBuilder::<FilteredEntityMut>::new(world);
+            builder.extend_access(taken_access.clone());
+            let state: QueryState<FilteredEntityMut<'static, 'static>> = builder.build();
+            let entity = world
+                .spawn(LuaQueryEntry {
+                    state,
+                    order: taken_order,
+                })
+                .id();
 
             *slot = QuerySlot::Built(entity);
         }
