@@ -49,7 +49,7 @@ pub(crate) mod ffi {
     use lasso::Spur;
     use mluau::prelude::*;
 
-    pub(crate) fn read_field(
+    pub fn read_field(
         ptr: Ptr<'_>,
         offset: usize,
         ft: LuauFieldType,
@@ -76,7 +76,7 @@ pub(crate) mod ffi {
         }
     }
 
-    pub(crate) fn write_field(
+    pub fn write_field(
         ptr: PtrMut<'_>,
         offset: usize,
         ft: LuauFieldType,
