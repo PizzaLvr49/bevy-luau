@@ -17,6 +17,9 @@ pub mod pool;
 /// A module for luau record and rust struct ffi
 pub mod fields;
 
+/// A module for registering schemas for types
+pub mod schema;
+
 /// A plugin to integrate bevy and luau
 #[derive(Resource, Clone, Default)]
 pub struct BevyLuauPlugin {

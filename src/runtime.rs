@@ -2,7 +2,7 @@ use std::alloc::Layout;
 
 use bevy::{
     ecs::{
-        component::{ComponentId, StorageType},
+        component::{ComponentCloneBehavior, ComponentDescriptor, ComponentId, StorageType},
         query::FilteredAccess,
         world::FilteredEntityMut,
     },
@@ -12,7 +12,7 @@ use lasso::Spur;
 use mluau::prelude::*;
 use smallvec::SmallVec;
 
-use crate::{fields::LuauFieldType, query::LuaQueryEntry};
+use crate::{fields::LuauFieldType, query::LuaQueryEntry, schema::SchemaRegistry};
 
 /// Holds a [`Lua`] and other relevant state
 #[derive(Resource)]
@@ -68,4 +68,38 @@ pub(crate) fn flush_pending_queries(world: &mut World) {
     });
 }
 
-pub(crate) const fn flush_pending_components(_world: &mut World) {}
+pub(crate) fn flush_pending_components(world: &mut World) {
+    world.resource_scope(|world, mut runtime: Mut<LuauRuntime>| {
+        world.resource_scope(|world, mut schema: Mut<SchemaRegistry>| {
+            for slot in &mut runtime.state.components {
+                let ComponentSlot::Pending {
+                    layout,
+                    storage,
+                    offsets,
+                } = slot
+                else {
+                    continue;
+                };
+                let (layout, storage) = (*layout, *storage);
+                let offsets = std::mem::take(offsets);
+
+                #[expect(unsafe_code, reason = "All POD and validated layout")]
+                let descriptor = unsafe {
+                    ComponentDescriptor::new_with_layout(
+                        "LuauComponent",
+                        storage,
+                        layout,
+                        None,
+                        true,
+                        ComponentCloneBehavior::Default,
+                        None,
+                    )
+                };
+
+                let id = world.register_component_with_descriptor(descriptor);
+                schema.insert(id, offsets);
+                *slot = ComponentSlot::Built(id);
+            }
+        });
+    });
+}

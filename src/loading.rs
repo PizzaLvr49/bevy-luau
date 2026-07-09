@@ -163,8 +163,8 @@ pub(crate) fn init_luau(
 
     commands.insert_resource(LuauRuntime { lua, state });
 
-    commands.queue(runtime::flush_pending_queries);
     commands.queue(runtime::flush_pending_components);
+    commands.queue(runtime::flush_pending_queries);
 }
 
 struct LuauComponentMarker(pub(crate) usize);
