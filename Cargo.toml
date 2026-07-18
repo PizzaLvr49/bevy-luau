@@ -20,7 +20,7 @@ mluau = { git = "https://github.com/mluau/mluau", features = [
 serde = { version = "1.0.228", features = ["derive"] }
 smallvec = "1.15.1"
 smol_str = "0.3.6"
-thiserror = "2.0.18"
+thiserror = "2.0.19"
 
 [profile.dev.package."*"]
 opt-level = 3
