@@ -1,5 +1,7 @@
 use bevy::ecs::component::ComponentId;
 use bevy::prelude::*;
+use bevy::ptr::OwningPtr;
+use bumpalo::Bump;
 use mluau::prelude::*;
 
 use crate::pool::EngineStringPool;
@@ -42,20 +44,40 @@ impl NativeBuiltin for TimeBuiltin {
     }
 }
 
-pub fn sync(time: Res<Time>, binding: Res<TimeBinding>, mut registry: ResMut<SchemaRegistry>) {
-    let Some(data) = registry.resource_data.get_mut(&binding.component_id) else {
-        return;
-    };
-    let delta_secs = f64::from(time.delta_secs());
-    let elapsed_secs = time.elapsed().as_secs_f64();
-    unsafe {
-        data.as_mut_ptr()
-            .add(binding.delta_offset)
-            .cast::<f64>()
-            .write_unaligned(delta_secs);
-        data.as_mut_ptr()
-            .add(binding.elapsed_offset)
-            .cast::<f64>()
-            .write_unaligned(elapsed_secs);
-    }
+pub fn sync(world: &mut World) {
+    let delta_secs = f64::from(world.resource::<Time>().delta_secs());
+    let elapsed_secs = world.resource::<Time>().elapsed().as_secs_f64();
+    let binding = *world.resource::<TimeBinding>();
+
+    world.resource_scope(|world, registry: Mut<SchemaRegistry>| {
+        let Some(schema) = registry.id_to_schema.get(&binding.component_id) else {
+            return;
+        };
+        let layout = schema.layout;
+        let bump = Bump::new();
+
+        let ptr = bump.alloc_layout(layout);
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                schema.default_template.as_ptr(),
+                ptr.as_ptr(),
+                layout.size(),
+            );
+            ptr.as_ptr()
+                .add(binding.delta_offset)
+                .cast::<f64>()
+                .write_unaligned(delta_secs);
+            ptr.as_ptr()
+                .add(binding.elapsed_offset)
+                .cast::<f64>()
+                .write_unaligned(elapsed_secs);
+        }
+
+        let owning = unsafe { OwningPtr::new(ptr) };
+        unsafe {
+            world
+                .entity_mut(registry.resource_entity)
+                .insert_by_id(binding.component_id, owning);
+        }
+    });
 }
