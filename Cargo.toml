@@ -17,7 +17,7 @@ mluau = { git = "https://github.com/mluau/mluau", features = [
     "luau-vector4",
     "send",
 ] }
-serde = { version = "1.0.228", features = ["derive"] }
+serde = { version = "1.0.229", features = ["derive"] }
 smallvec = "1.15.1"
 smol_str = "0.3.6"
 thiserror = "2.0.19"
