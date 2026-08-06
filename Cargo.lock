@@ -1858,7 +1858,7 @@ checksum = "0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad"
 [[package]]
 name = "luau0-src"
 version = "0.18.3+luau730"
-source = "git+https://github.com/mluau/luau-src-rs#4a4db7e119aa7e1e5811231401b90dc65a0a3512"
+source = "git+https://github.com/mluau/luau-src-rs#e8b188d6219e8c446805d0b4f68b2de6148a32d9"
 dependencies = [
  "cc",
 ]
@@ -1881,7 +1881,7 @@ checksum = "88904434abc2901f197fe8cc55f0445e7ded921dba5911dad2e2b39b48e663c4"
 [[package]]
 name = "mlua-sys"
 version = "0.9.0"
-source = "git+https://github.com/mluau/mluau#8cb2a42a9787b8c02af62a58578f3a32d3fb6e40"
+source = "git+https://github.com/mluau/mluau#d69e5138f5c299ab1cac273772b5dc20e6079a1b"
 dependencies = [
  "cc",
  "cfg-if",
@@ -1892,17 +1892,20 @@ dependencies = [
 [[package]]
 name = "mluau"
 version = "0.11.5"
-source = "git+https://github.com/mluau/mluau#8cb2a42a9787b8c02af62a58578f3a32d3fb6e40"
+source = "git+https://github.com/mluau/mluau#d69e5138f5c299ab1cac273772b5dc20e6079a1b"
 dependencies = [
  "bstr",
  "bytes",
  "either",
+ "erased-serde",
  "libc",
  "mlua-sys",
  "num-traits",
  "parking_lot",
  "rustc-hash 2.1.2",
  "rustversion",
+ "serde",
+ "serde-value",
 ]
 
 [[package]]
@@ -2124,6 +2127,15 @@ name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
+
+[[package]]
+name = "ordered-float"
+version = "2.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "68f19d67e5a2795c94e73e0bb1cc1a7edeb2e28efd39e2e1c9b7a40c1108b11c"
+dependencies = [
+ "num-traits",
+]
 
 [[package]]
 name = "ordered-float"
@@ -2470,6 +2482,16 @@ checksum = "9a8e94ea7f378bd32cbbd37198a4a91436180c5bb472411e48b5ec2e2124ae9e"
 dependencies = [
  "serde_core",
  "serde_derive",
+]
+
+[[package]]
+name = "serde-value"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f3a1a3341211875ef120e117ea7fd5228530ae7e7036a779fdc9117be6b3282c"
+dependencies = [
+ "ordered-float 2.10.1",
+ "serde",
 ]
 
 [[package]]
@@ -3092,7 +3114,7 @@ dependencies = [
  "objc2-metal",
  "objc2-quartz-core",
  "once_cell",
- "ordered-float",
+ "ordered-float 5.3.0",
  "parking_lot",
  "portable-atomic",
  "portable-atomic-util",
